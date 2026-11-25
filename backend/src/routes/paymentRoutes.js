@@ -1,6 +1,8 @@
 'use strict';
 
 const express = require('express');
+const { validateQuery } = require('../middleware/validateQuery');
+const queries = require('../middleware/schemas/routeQuerySchemas');
 const { requireAdminAuth, requireSchoolAuth } = require('../middleware/auth');
 
 const {
@@ -57,7 +59,6 @@ const {
   validateCreatePaymentIntent,
   validateVerifyPayment,
   validateSubmitTransaction,
-  validatePagination,
 } = require('../middleware/validate');
 const { resolveSchool } = require('../middleware/schoolContext');
 const idempotencyMiddleware = require('../middleware/idempotency');
@@ -186,15 +187,15 @@ router.post(
 router.use(resolveSchool);
 
 // Payment read endpoints now require authentication (Issue #1040)
-router.get("/", requireSchoolAuth(), validatePagination, getAllPayments);
+router.get("/", requireSchoolAuth(), validateQuery(queries.paymentList, { includeDetails: true, legacyOffset: true }), getAllPayments);
 router.get("/summary", requireSchoolAuth(), getPaymentSummary);
 router.get("/accepted-assets", requireSchoolAuth(), getAcceptedAssets);
 router.get("/limits", requireSchoolAuth(), getPaymentLimitsEndpoint);
 router.get("/sync/status", requireSchoolAuth(), getSyncStatus);
 router.get("/events", requireSchoolAuth(), streamPaymentEvents);
-router.get("/overpayments", requireSchoolAuth(), getOverpayments);
-router.get("/suspicious", requireSchoolAuth(), getSuspiciousPayments);
-router.get("/pending", requireSchoolAuth(), getPendingPayments);
+router.get("/overpayments", requireSchoolAuth(), validateQuery(queries.pagination), getOverpayments);
+router.get("/suspicious", requireSchoolAuth(), validateQuery(queries.pagination), getSuspiciousPayments);
+router.get("/pending", requireSchoolAuth(), validateQuery(queries.pagination), getPendingPayments);
 router.get("/stuck", requireAdminAuth, getStuckPayments);
 router.get("/retry-queue", requireAdminAuth, getRetryQueue);
 router.get("/rates", requireSchoolAuth(), getExchangeRates);
@@ -223,7 +224,7 @@ router.get(
 );
 router.get("/receipt/:txHash", generateReceipt);
 router.get("/queue/:txHash", requireSchoolAuth(), getQueueJobStatus);
-router.get("/:studentId", validateStudentIdParam, requireSchoolAuth(), getStudentPayments);
+router.get("/:studentId", validateStudentIdParam, requireSchoolAuth(), validateQuery(queries.pagination), getStudentPayments);
 
 router.post("/:paymentId/lock", requireSchoolAuth(), contractPaused, lockPaymentForUpdate);
 router.post("/:paymentId/unlock", requireSchoolAuth(), unlockPayment);
@@ -238,11 +239,11 @@ router.patch("/:txHash/correct-placeholder", requireAdminAuth, auditContext, con
 router.post("/:txHash/refund", requireAdminAuth, auditContext, contractPaused, initiatePaymentRefund);
 router.post("/refunds/:refundId/approve", requireAdminAuth, auditContext, contractPaused, approvePaymentRefund);
 router.get("/:txHash/refunds", getPaymentRefunds);
-router.get("/refunds/school/list", requireAdminAuth, getSchoolRefunds);
+router.get("/refunds/school/list", requireAdminAuth, validateQuery(queries.refundList), getSchoolRefunds);
 
 router.get("/verify/:receiptId", verifyReceipt);
 
-router.get("/reconciliation/reports", requireAdminAuth, getReconciliationReports);
+router.get("/reconciliation/reports", requireAdminAuth, validateQuery(queries.limitOnly), getReconciliationReports);
 router.post("/reconciliation/report", requireAdminAuth, auditContext, contractPaused, generateSchoolReconciliationReport);
 
 module.exports = router;

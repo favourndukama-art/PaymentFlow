@@ -71,6 +71,8 @@ const { requestLogger } = require('./middleware/requestLogger');
 const { correlationIdMiddleware } = require('./middleware/correlationId');
 const { createConcurrentRequestMiddleware } = require('./middleware/concurrentRequestHandler');
 const { requireAdminAuth } = require('./middleware/auth');
+const { validateQuery } = require('./middleware/validateQuery');
+const { tenantQuery } = require('./middleware/schemas/routeQuerySchemas');
 const { jsonDepthGuard, deduplicateQueryParams } = require('./middleware/sanitizeRequest');
 const { runConsistencyCheck } = require('./controllers/consistencyController');
 const { healthCheck, healthLive, healthReady } = require('./controllers/healthController');
@@ -162,6 +164,7 @@ app.use((req, res, next) => {
 // ── JSON depth / array-bomb guard + query-param de-pollution ──────────────────
 app.use(jsonDepthGuard);
 app.use(deduplicateQueryParams);
+app.use('/api', validateQuery(tenantQuery));
 
 const concurrentMiddleware = createConcurrentRequestMiddleware({
   circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 30000, halfOpenSuccessThreshold: 2 },

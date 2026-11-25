@@ -236,7 +236,7 @@ async function listDeliveries(req, res, next) {
     const filter = { schoolId };
     if (req.query.endpointId) filter.endpointId = req.query.endpointId;
     if (req.query.event) filter.event = req.query.event;
-    if (req.query.success !== undefined) filter.success = req.query.success === 'true';
+    if (req.query.success !== undefined) filter.success = req.query.success;
 
     const [items, total] = await Promise.all([
       WebhookDelivery.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),

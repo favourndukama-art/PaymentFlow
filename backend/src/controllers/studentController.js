@@ -1043,7 +1043,7 @@ const MAX_EXPORT_ROWS = 50000;
 async function exportStudents(req, res, next) {
   try {
     const { schoolId } = req;
-    const includeDeleted = req.query.includeDeleted === 'true';
+    const includeDeleted = req.query.includeDeleted === true;
 
     const filter = { schoolId };
     if (!includeDeleted) {

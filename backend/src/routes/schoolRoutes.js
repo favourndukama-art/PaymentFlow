@@ -1,6 +1,8 @@
 'use strict';
 
 const express = require('express');
+const { validateQuery } = require('../middleware/validateQuery');
+const queries = require('../middleware/schemas/routeQuerySchemas');
 const router = express.Router();
 const {
   createSchool,
@@ -21,7 +23,7 @@ const { requireAdminAuth } = require('../middleware/auth');
 const { auditContext } = require('../middleware/auditContext');
 
 // Public read endpoints
-router.get('/',                 getAllSchools);
+router.get('/',                 validateQuery(queries.schoolList), getAllSchools);
 router.get('/:schoolId',        getSchool);
 
 // Admin-only write endpoints — require JWT auth

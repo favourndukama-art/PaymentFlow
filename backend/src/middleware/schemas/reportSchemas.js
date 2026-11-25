@@ -10,11 +10,12 @@ const MAX_RANGE_DAYS = parseInt(process.env.REPORT_MAX_RANGE_DAYS || '366', 10);
  * schema_version: only meaningful for accounting_csv; defaults to 1 (current).
  */
 const reportQuerySchema = Joi.object({
-  startDate:      Joi.string().isoDate().optional(),
-  endDate:        Joi.string().isoDate().optional(),
+  startDate:      Joi.string().isoDate().strict().optional(),
+  endDate:        Joi.string().isoDate().strict().optional(),
   format:         Joi.string().valid('json', 'csv', 'accounting_csv').default('json'),
   schema_version: Joi.number().integer().min(1).max(1).default(1),
-  async:          Joi.boolean().optional(),
+  // Preserve the legacy false aliases used by report clients.
+  async:          Joi.boolean().sensitive().falsy('0', '', 'TRUE').default(false),
 }).custom((value, helpers) => {
   const { startDate, endDate } = value;
   if (startDate && endDate) {

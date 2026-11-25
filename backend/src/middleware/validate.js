@@ -1,8 +1,6 @@
-  req.legacyOffsetPagination = req.query.page !== undefined;
-  req.legacyOffsetPagination = req.query.page !== undefined;
 'use strict';
 
-const Joi = require('joi');
+const { validateQuery } = require('./validateQuery');
 const { validateDecimalAmount } = require('../utils/decimalPrecision');
 
 const {
@@ -29,6 +27,7 @@ const {
 } = require('./schemas/requestLimitSchemas');
 
 function validate(schema, source = 'body') {
+  if (source === 'query') return validateQuery(schema, { includeDetails: true });
   return (req, res, next) => {
     const { error, value } = schema.validate(req[source], {
       abortEarly: false,
@@ -142,60 +141,9 @@ function validateFeeStructure(req, res, next) {
  * Validate pagination query params (page, limit) before any DB query.
  * Applies to all list endpoints. Allows unknown params through.
  */
-function validatePagination(req, res, next) {
-  const { error, value } = paginationSchema.validate(req.query, {
-    abortEarly: false,
-    convert: true,
-  });
-  if (error) {
-    const errors = error.details.map((d) => ({
-      field:   d.context?.key || d.path.join('.') || 'unknown',
-      message: d.message,
-    }));
-    return res.status(400).json({ errors, code: 'VALIDATION_ERROR' });
-  }
-  req.query = { ...req.query, ...value };
-  return next();
-}
-
-/**
- * Validate export pagination — allows up to 10 000 rows.
- */
-function validateExportPagination(req, res, next) {
-  const { error, value } = exportPaginationSchema.validate(req.query, {
-    abortEarly: false,
-    convert: true,
-  });
-  if (error) {
-    const errors = error.details.map((d) => ({
-      field:   d.context?.key || d.path.join('.') || 'unknown',
-      message: d.message,
-    }));
-    return res.status(400).json({ errors, code: 'VALIDATION_ERROR' });
-  }
-  req.query = { ...req.query, ...value };
-  return next();
-}
-
-/**
- * Validate audit log query parameters — enforces max lengths on all filter
- * strings before they reach the DB layer.
- */
-function validateAuditQuery(req, res, next) {
-  const { error, value } = auditQuerySchema.validate(req.query, {
-    abortEarly: false,
-    convert: true,
-  });
-  if (error) {
-    const errors = error.details.map((d) => ({
-      field:   d.context?.key || d.path.join('.') || 'unknown',
-      message: d.message,
-    }));
-    return res.status(400).json({ errors, code: 'VALIDATION_ERROR' });
-  }
-  req.query = value;
-  return next();
-}
+const validatePagination = validateQuery(paginationSchema, { includeDetails: true, legacyOffset: true });
+const validateExportPagination = validateQuery(exportPaginationSchema, { includeDetails: true });
+const validateAuditQuery = validateQuery(auditQuerySchema, { includeDetails: true, legacyOffset: true });
 
 /**
  * Validate PUT /api/students/:studentId body.

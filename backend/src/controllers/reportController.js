@@ -16,6 +16,10 @@ const { ReportJob, REPORT_STATUSES } = require('../models/reportJobModel');
 const School = require('../models/schoolModel');
 const { createReportDownloadUrl, SIGNED_URL_TTL_SECONDS } = require('../services/reportArtifactStorage');
 
+const { validateQuery } = require('../middleware/validateQuery');
+const { reportQuerySchema } = require('../middleware/schemas/reportSchemas');
+const validateReportQuery = validateQuery(reportQuerySchema, { includeDetails: true });
+
 const LARGE_REPORT_THRESHOLD_DAYS = parseInt(process.env.LARGE_REPORT_THRESHOLD_DAYS || '30', 10);
 
 function getDaysBetween(startDate, endDate) {
@@ -25,12 +29,15 @@ function getDaysBetween(startDate, endDate) {
   return Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
 }
 
-async function getReport(req, res, next) {
+function getReport(req, res, next) {
+  return validateReportQuery(req, res, () => generateRequestedReport(req, res, next));
+}
+
+async function generateRequestedReport(req, res, next) {
   try {
-    const { startDate, endDate, format = 'json', schema_version } = req.query;
-    // req.query values are always strings; coerce explicitly so ?async=false is
-    // treated as false rather than the truthy string "false".
-    const isAsync = req.query.async === 'true';
+    const { format, schema_version, async: isAsync } = req.query;
+    const startDate = req.query.startDate?.slice(0, 10);
+    const endDate = req.query.endDate?.slice(0, 10);
     const isLargeReport = !startDate || !endDate || getDaysBetween(startDate, endDate) >= LARGE_REPORT_THRESHOLD_DAYS;
 
     // Audit report exports — exports can contain PII so they are a privileged read
@@ -54,7 +61,7 @@ async function getReport(req, res, next) {
       });
     }
 
-    if (isAsync || isLargeReport) {
+    if (isAsync && isLargeReport) {
       try {
         const job = await enqueueReportJob({
           schoolId: req.schoolId,

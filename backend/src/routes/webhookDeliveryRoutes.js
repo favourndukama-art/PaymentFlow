@@ -1,6 +1,8 @@
 'use strict';
 
 const express = require('express');
+const { validateQuery } = require('../middleware/validateQuery');
+const queries = require('../middleware/schemas/routeQuerySchemas');
 const router = express.Router();
 const { listDeliveries, replayDelivery } = require('../controllers/webhookEndpointsController');
 const { requireSchoolAuth } = require('../middleware/auth');
@@ -10,7 +12,7 @@ const { auditContext } = require('../middleware/auditContext');
 router.use(requireSchoolAuth());
 
 // GET  /api/webhook-deliveries?endpointId=&event=&success=&page=&limit=
-router.get('/', listDeliveries);
+router.get('/', validateQuery(queries.webhookDeliveries), listDeliveries);
 
 // POST /api/webhook-deliveries/:id/replay
 router.post('/:id/replay', auditContext, replayDelivery);

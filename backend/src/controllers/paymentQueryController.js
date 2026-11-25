@@ -110,23 +110,15 @@ async function getAllPayments(req, res, next) {
       }
     }
 
-    if (minAmount || maxAmount) {
+    if (minAmount !== undefined || maxAmount !== undefined) {
       filter.amount = {};
-      if (minAmount) {
-        const min = Number(minAmount);
-        if (!Number.isFinite(min)) return res.status(400).json({ error: 'Invalid minAmount', code: 'VALIDATION_ERROR' });
-        filter.amount.$gte = min;
-      }
-      if (maxAmount) {
-        const max = Number(maxAmount);
-        if (!Number.isFinite(max)) return res.status(400).json({ error: 'Invalid maxAmount', code: 'VALIDATION_ERROR' });
-        filter.amount.$lte = max;
-      }
+      if (minAmount !== undefined) filter.amount.$gte = minAmount;
+      if (maxAmount !== undefined) filter.amount.$lte = maxAmount;
     }
 
     if (status) filter.status = status.toUpperCase();
     if (studentId) filter.studentId = studentId;
-    if (isSuspicious !== undefined) filter.isSuspicious = isSuspicious === 'true';
+    if (isSuspicious !== undefined) filter.isSuspicious = isSuspicious;
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10)));
@@ -154,8 +146,8 @@ async function getAllPayments(req, res, next) {
         schoolId,
         startDate: startDate || null,
         endDate: endDate || null,
-        minAmount: minAmount || null,
-        maxAmount: maxAmount || null,
+        minAmount: minAmount ?? null,
+        maxAmount: maxAmount ?? null,
         status: status || null,
         studentId: studentId || null,
         isSuspicious: isSuspicious ?? null,
