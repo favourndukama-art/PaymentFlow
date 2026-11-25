@@ -52,6 +52,8 @@ async function enqueueReportJob(jobData) {
     status: { $in: [REPORT_STATUSES.PENDING, REPORT_STATUSES.PROCESSING] },
     'params.startDate': jobData.startDate || null,
     'params.endDate': jobData.endDate || null,
+    'params.className': jobData.className || null,
+    'params.classAt': jobData.classAt || null,
   }).lean();
 
   if (existingJob) {
@@ -74,6 +76,8 @@ async function enqueueReportJob(jobData) {
     params: {
       startDate: jobData.startDate || null,
       endDate: jobData.endDate || null,
+      className: jobData.className || null,
+      classAt: jobData.classAt || null,
       timezone: jobData.timezone || 'UTC',
       schemaVersion: jobData.schemaVersion || null,
       format: jobData.format || 'json',

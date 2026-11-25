@@ -8,6 +8,7 @@ const {
   getStudent,
   getPublicStudentInfo,
   updateStudent,
+  getStudentClassHistory,
   deleteStudent,
   restoreStudent,
   getDeletedStudentPayments,
@@ -58,5 +59,8 @@ router.post('/:studentId/reconcile', requireAdminAuth, auditContext, validateStu
 router.post('/:studentId/reminders/resubscribe', requireAdminAuth, auditContext, validateStudentIdParam, resubscribeReminders);
 router.get('/:studentId/fee-history', requireAdminAuth, validateStudentIdParam, getFeeHistory);
 router.post('/:studentId/credit-adjustments', requireAdminAuth, validateStudentIdParam, auditContext, contractPaused, adjustStudentCredit);
+
+router.patch('/:studentId', requireAdminAuth, auditContext, validateStudentIdParam, validateUpdateStudent, updateStudent);
+router.get('/:studentId/class-history', requireAdminAuth, validateStudentIdParam, getStudentClassHistory);
 
 module.exports = router;

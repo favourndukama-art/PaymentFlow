@@ -33,6 +33,14 @@ async function getReport(req, res, next) {
     const isAsync = req.query.async === 'true';
     const isLargeReport = !startDate || !endDate || getDaysBetween(startDate, endDate) >= LARGE_REPORT_THRESHOLD_DAYS;
 
+    const { class: className, classAt } = req.query;
+    const classFilter = {
+      ...(className && { className }),
+      ...(classAt && { classAt }),
+    };
+    const reportRange = { startDate: startDate?.slice(0, 10), endDate: endDate?.slice(0, 10) };
+    const classCacheKey = className || classAt ? `:${JSON.stringify([className, classAt])}` : '';
+
     // Audit report exports — exports can contain PII so they are a privileged read
     if (req.auditContext) {
       const { logAudit } = require('../services/auditService');
@@ -47,6 +55,7 @@ async function getReport(req, res, next) {
           startDate: startDate || null,
           endDate:   endDate   || null,
           async:     isAsync,
+          ...classFilter,
         },
         result:    'success',
         ipAddress: req.auditContext.ipAddress,
@@ -60,9 +69,9 @@ async function getReport(req, res, next) {
           schoolId: req.schoolId,
           type: format === 'accounting_csv' ? 'accounting_csv' : 'report',
           format,
-          startDate,
-          endDate,
+          ...reportRange,
           timezone: (await School.findOne({ schoolId: req.schoolId }).lean())?.timezone || 'UTC',
+          ...classFilter,
           schemaVersion: schema_version || (format === 'accounting_csv' ? ACCOUNTING_SCHEMA_VERSION : null),
         });
 
@@ -90,7 +99,7 @@ async function getReport(req, res, next) {
     if (format === 'accounting_csv') {
       const dataVersion = await getDataVersion(req.schoolId);
       const timezone = (await School.findOne({ schoolId: req.schoolId }).lean())?.timezone || 'UTC';
-      const cacheKey = KEYS.report(req.schoolId, startDate, endDate, dataVersion, timezone);
+      const cacheKey = KEYS.report(req.schoolId, startDate, endDate, dataVersion, timezone) + ':accounting' + classCacheKey;
       let cached = get(cacheKey);
       if (cached !== undefined) {
         const csv = cached.csv;
@@ -108,7 +117,7 @@ async function getReport(req, res, next) {
         return res.send(csv);
       }
 
-      const { csv, schemaVersion } = await generateAccountingCsv({ schoolId: req.schoolId, startDate, endDate, timezone });
+      const { csv, schemaVersion } = await generateAccountingCsv({ schoolId: req.schoolId, ...reportRange, timezone, ...classFilter });
       set(cacheKey, { csv, schemaVersion }, TTL.REPORT);
 
       const s = startDate || null;
@@ -127,10 +136,10 @@ async function getReport(req, res, next) {
     const school = await School.findOne({ schoolId: req.schoolId }).lean();
     const timezone = school?.timezone || 'UTC';
     const dataVersion = await getDataVersion(req.schoolId);
-    const cacheKey = KEYS.report(req.schoolId, startDate, endDate, dataVersion, timezone);
+    const cacheKey = KEYS.report(req.schoolId, startDate, endDate, dataVersion, timezone) + classCacheKey;
     let report = get(cacheKey);
     if (report === undefined) {
-      report = await generateReport({ schoolId: req.schoolId, startDate, endDate, timezone });
+      report = await generateReport({ schoolId: req.schoolId, ...reportRange, timezone, ...classFilter });
       set(cacheKey, report, TTL.REPORT);
     }
 

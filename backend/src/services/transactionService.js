@@ -35,8 +35,8 @@ async function savePayment(data, options = {}) {
   if (!data.referenceCode) {
     data = { ...data, referenceCode: await generateReferenceCode() };
   }
+  const payment = new Payment(data);
   try {
-    const payment = new Payment(data);
     await payment.save(session ? { session } : {});
 
     const eventId = uuidv4();
@@ -61,7 +61,7 @@ async function savePayment(data, options = {}) {
       if (options.allowFailedReplay) {
         const replayedPayment = await Payment.findOneAndUpdate(
           { schoolId: data.schoolId, txHash: data.txHash, status: 'FAILED' },
-          { $set: data },
+          { $set: { ...data, classAtPaymentTime: payment.classAtPaymentTime ?? null } },
           { new: true, runValidators: true, session },
         );
         if (replayedPayment) {

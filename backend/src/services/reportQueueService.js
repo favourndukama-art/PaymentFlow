@@ -17,22 +17,28 @@ const logger = require('../utils/logger');
 const { storeReportArtifact } = require('./reportArtifactStorage');
 
 async function processReportJob(job) {
-  const { jobId, schoolId, type, startDate, endDate, timezone, schemaVersion, format = 'json' } = job.data;
+  const { jobId, schoolId, type, startDate, endDate, timezone, schemaVersion, className, classAt, format = 'json' } = job.data;
+  const options = { schoolId, startDate, endDate, timezone, className, classAt };
 
   await setJobProcessing(jobId);
   logger.info('[ReportQueueService] Processing report job', { jobId, type, schoolId });
 
   try {
-    let artifactKey;
-    let contentType;
-    let actualSchemaVersion = null;
+    let content;
+    let actualSchemaVersion = schemaVersion;
+    const isCsv = type === 'accounting_csv' || format === 'csv';
     if (type === 'accounting_csv') {
-      const { csv, schemaVersion: sv } = await generateAccountingCsv({ schoolId, startDate, endDate, timezone });
-      await setJobCompleted(jobId, { csv, schemaVersion: sv });
-      return { success: true, jobId, type };
+      const { csv, schemaVersion: version } = await generateAccountingCsv(options);
+      content = csv;
+      actualSchemaVersion = version;
+    } else {
+      const report = await generateReport(options);
+      content = isCsv ? reportToCsv(report) : JSON.stringify(report);
     }
 
-    await setJobCompleted(jobId, { artifactKey, schemaVersion: actualSchemaVersion || schemaVersion });
+    const artifactKey = `reports/${schoolId}/${jobId}.${isCsv ? 'csv' : 'json'}`;
+    await storeReportArtifact(artifactKey, content, isCsv ? 'text/csv' : 'application/json');
+    await setJobCompleted(jobId, { artifactKey, schemaVersion: actualSchemaVersion });
     return { success: true, jobId, type };
   } catch (err) {
     await setJobFailed(jobId, err);

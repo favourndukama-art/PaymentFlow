@@ -29,6 +29,8 @@ const reportJobSchema = new mongoose.Schema(
     params: {
       startDate: { type: String, default: null },
       endDate: { type: String, default: null },
+      className: { type: String, default: null },
+      classAt: { type: String, default: null },
       timezone: { type: String, default: 'UTC' },
       schemaVersion: { type: Number, default: null },
       format: { type: String, default: 'json' },

@@ -279,7 +279,7 @@ async function submitTransaction(req, res, next) {
     paymentRecord = (await transitionPayment(paymentRecord, 'SUCCESS', {
       performedBy: transitionActor,
       schoolId: req.schoolId,
-      updates: { confirmedAt: new Date(), ledgerSequence: txResponse.ledger },
+      updates: { confirmedAt: txResponse.created_at ? new Date(txResponse.created_at) : new Date(), ledgerSequence: txResponse.ledger },
     })).payment;
 
     // Issue #1034: Update student balance fields using the unified balance updater.

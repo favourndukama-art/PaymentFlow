@@ -54,24 +54,101 @@ async function getDataVersion(schoolId) {
   return latest?.confirmedAt ? new Date(latest.confirmedAt).toISOString() : '0';
 }
 
+function confirmedPaymentMatch({ schoolId, startDate, endDate, timezone }) {
+  const match = { schoolId, status: 'SUCCESS', studentDeleted: { $ne: true }, deletedAt: null };
+  if (startDate || endDate) {
+    match.confirmedAt = {};
+    if (startDate) match.confirmedAt.$gte = localDateStartUtc(startDate, timezone);
+    if (endDate) match.confirmedAt.$lt = localDateStartUtc(nextDateString(endDate), timezone);
+  }
+  return match;
+}
+
+function classAtExpression(student, date) {
+  const field = (key) => student ? `${student}.${key}` : `$${key}`;
+  return {
+    $let: {
+      vars: { history: { $ifNull: [field('classHistory'), []] } },
+      in: {
+        $cond: [
+          { $gt: [{ $size: '$$history' }, 0] },
+          {
+            $let: {
+              vars: {
+                assignment: {
+                  $arrayElemAt: [{
+                    $filter: {
+                      input: '$$history',
+                      as: 'entry',
+                      cond: {
+                        $and: [
+                          { $lte: ['$$entry.from', date] },
+                          { $or: [{ $eq: ['$$entry.to', null] }, { $gt: ['$$entry.to', date] }] },
+                        ],
+                      },
+                    },
+                  }, -1],
+                },
+              },
+              in: { $ifNull: ['$$assignment.class', null] },
+            },
+          },
+          {
+            $cond: [
+              { $lte: [{ $ifNull: [field('createdAt'), new Date(0)] }, date] },
+              { $ifNull: [field('class'), null] },
+              null,
+            ],
+          },
+        ],
+      },
+    },
+  };
+}
+
+function paymentClassStages({ className, classAt, timezone }) {
+  const date = classAt
+    ? (classAt.length === 10 ? localDateStartUtc(classAt, timezone) : new Date(classAt))
+    : { $ifNull: ['$confirmedAt', '$createdAt'] };
+  const historicalClass = classAtExpression('$_student', date);
+  return [
+    {
+      $lookup: {
+        from: 'students',
+        let: {
+          studentId: '$studentId',
+          schoolId: '$schoolId',
+          needsHistory: classAt ? true : { $eq: [{ $ifNull: ['$classAtPaymentTime', null] }, null] },
+        },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: ['$$needsHistory', { $eq: ['$studentId', '$$studentId'] }, { $eq: ['$schoolId', '$$schoolId'] }],
+              },
+            },
+          },
+          { $project: { class: 1, classHistory: 1, createdAt: 1 } },
+        ],
+        as: '_student',
+      },
+    },
+    { $set: { _student: { $arrayElemAt: ['$_student', 0] } } },
+    { $set: { _reportClass: classAt ? historicalClass : { $ifNull: ['$classAtPaymentTime', historicalClass] } } },
+    ...(className ? [{ $match: { _reportClass: className } }] : []),
+  ];
+}
+
 /**
  * Aggregate confirmed payments grouped by date (YYYY-MM-DD), scoped to a school.
  *
  * @param {{ schoolId: string, startDate?: string, endDate?: string, timezone?: string }} options
  */
-async function aggregateByDate({ schoolId, startDate, endDate, timezone = 'UTC' } = {}) {
-  const match = { schoolId, status: 'SUCCESS', studentDeleted: { $ne: true }, deletedAt: null };
-
-  if (startDate || endDate) {
-    match.confirmedAt = {};
-    if (startDate) match.confirmedAt.$gte = localDateStartUtc(startDate, timezone);
-    if (endDate) {
-      match.confirmedAt.$lt = localDateStartUtc(nextDateString(endDate), timezone);
-    }
-  }
-
+async function aggregateByDate({ schoolId, startDate, endDate, timezone = 'UTC', className, classAt } = {}) {
+  const match = confirmedPaymentMatch({ schoolId, startDate, endDate, timezone });
   const rows = await Payment.aggregate([
     { $match: match },
+    ...(className ? paymentClassStages({ className, classAt, timezone }) : []),
     {
       $group: {
         // #1362 — confirmedAt may be null for payments recorded but not yet
@@ -119,8 +196,9 @@ async function aggregateByDate({ schoolId, startDate, endDate, timezone = 'UTC' 
  *
  * @param {{ schoolId: string, startDate?: string, endDate?: string, timezone?: string }} options
  */
-async function generateReport({ schoolId, startDate, endDate, timezone = 'UTC' } = {}) {
-  const byDate = await aggregateByDate({ schoolId, startDate, endDate, timezone });
+async function generateReport({ schoolId, startDate, endDate, timezone = 'UTC', className, classAt } = {}) {
+  const classFilter = { className, classAt, timezone };
+  const byDate = await aggregateByDate({ schoolId, startDate, endDate, ...classFilter });
 
   const totals = byDate.reduce(
     (acc, row) => {
@@ -134,58 +212,54 @@ async function generateReport({ schoolId, startDate, endDate, timezone = 'UTC' }
     { totalAmount: 0, paymentCount: 0, validCount: 0, overpaidCount: 0, underpaidCount: 0 }
   );
 
-  // Count students who have fully paid within the period
-  const match = { schoolId, status: 'SUCCESS', studentDeleted: { $ne: true }, deletedAt: null };
-  if (startDate || endDate) {
-    match.confirmedAt = {};
-    if (startDate) match.confirmedAt.$gte = new Date(startDate + 'T00:00:00.000Z');
-    if (endDate)   match.confirmedAt.$lte = new Date(endDate   + 'T23:59:59.999Z');
-  }
-
-  const paidStudentIds = await Payment.distinct('studentId', match);
+  const match = confirmedPaymentMatch({ schoolId, startDate, endDate, timezone });
+  const paidStudentIds = className
+    ? (await Payment.aggregate([
+      { $match: match },
+      ...paymentClassStages(classFilter),
+      { $group: { _id: '$studentId' } },
+    ], { maxTimeMS: POOL_CONFIG.reportAggregationMaxTimeMS })).map(({ _id }) => _id)
+    : await Payment.distinct('studentId', match);
   const fullyPaidCount = await Student.countDocuments({
     schoolId,
     studentId: { $in: paidStudentIds },
     feePaid: true,
   });
 
-  // Per-class breakdown: start from Student collection and lookup payments
-  // This ensures students with no payments are included
+  const rosterClass = classAt
+    ? classAtExpression('', classAt.length === 10 ? localDateStartUtc(classAt, timezone) : new Date(classAt))
+    : '$class';
+
+  // Build roster counts independently so students with no payments still
+  // appear. Attribute payment amounts to their historical class snapshots.
   const byClass = await Student.aggregate([
     { $match: { schoolId, deletedAt: null } },
+    { $project: { _reportClass: rosterClass, paidCount: { $cond: ['$feePaid', 1, 0] }, unpaidCount: { $cond: ['$feePaid', 0, 1] } } },
     {
-      $lookup: {
-        from: 'payments',
-        let: { studentId: '$studentId' },
+      $unionWith: {
+        coll: 'payments',
         pipeline: [
+          { $match: match },
+          ...paymentClassStages(classFilter),
           {
-            $match: {
-              $expr: { $eq: ['$studentId', '$$studentId'] },
-              schoolId,
-              status: 'SUCCESS',
-              studentDeleted: { $ne: true },
-              deletedAt: null,
+            $group: {
+              _id: '$_reportClass',
+              totalCollected: { $sum: '$amount' },
+              paymentCount: { $sum: 1 },
             },
           },
-          {
-            $match: startDate || endDate ? {
-              confirmedAt: {
-                ...(startDate ? { $gte: new Date(startDate + 'T00:00:00.000Z') } : {}),
-                ...(endDate ? { $lte: new Date(endDate + 'T23:59:59.999Z') } : {}),
-              },
-            } : {},
-          },
+          { $set: { _reportClass: '$_id' } },
         ],
-        as: 'payments',
       },
     },
+    { $match: { _reportClass: className || { $ne: null } } },
     {
       $group: {
-        _id: '$class',
-        totalCollected: { $sum: { $sum: '$payments.amount' } },
-        paymentCount: { $sum: { $size: '$payments' } },
-        paidStudentIds: { $addToSet: { $cond: ['$feePaid', '$studentId', '$$REMOVE'] } },
-        unpaidStudentIds: { $addToSet: { $cond: ['$feePaid', '$$REMOVE', '$studentId'] } },
+        _id: '$_reportClass',
+        totalCollected: { $sum: '$totalCollected' },
+        paymentCount: { $sum: '$paymentCount' },
+        paidCount: { $sum: '$paidCount' },
+        unpaidCount: { $sum: '$unpaidCount' },
       },
     },
     {
@@ -194,8 +268,8 @@ async function generateReport({ schoolId, startDate, endDate, timezone = 'UTC' }
         className: '$_id',
         totalCollected: { $round: ['$totalCollected', 7] },
         paymentCount: 1,
-        paidCount: { $size: '$paidStudentIds' },
-        unpaidCount: { $size: '$unpaidStudentIds' },
+        paidCount: 1,
+        unpaidCount: 1,
       },
     },
     { $sort: { className: 1 } },
@@ -205,8 +279,8 @@ async function generateReport({ schoolId, startDate, endDate, timezone = 'UTC' }
   let dateRangeDays = null;
   if (startDate && endDate) {
     const start = new Date(startDate + 'T00:00:00.000Z');
-    const end = new Date(endDate + 'T23:59:59.999Z');
-    dateRangeDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    const end = new Date(endDate + 'T00:00:00.000Z');
+    dateRangeDays = (end - start) / (1000 * 60 * 60 * 24) + 1;
   }
 
   return {
@@ -438,34 +512,17 @@ const ACCOUNTING_HEADERS_V1 = [
  */
 // Build the $match / $lookup / $sort pipeline shared by the buffered and
 // streaming accounting exports.
-function buildAccountingPipeline({ schoolId, startDate, endDate, timezone = 'UTC' }) {
-  const match = { schoolId, status: 'SUCCESS', studentDeleted: { $ne: true }, deletedAt: null };
-  if (startDate || endDate) {
-    match.confirmedAt = {};
-    if (startDate) match.confirmedAt.$gte = localDateStartUtc(startDate, timezone);
-    if (endDate) match.confirmedAt.$lt = localDateStartUtc(nextDateString(endDate), timezone);
-  }
-
+function buildAccountingPipeline({ schoolId, startDate, endDate, timezone = 'UTC', className, classAt }) {
   return [
-    { $match: match },
-    {
-      $lookup: {
-        from: 'students',
-        let: { sid: '$studentId', scid: '$schoolId' },
-        pipeline: [
-          { $match: { $expr: { $and: [{ $eq: ['$studentId', '$$sid'] }, { $eq: ['$schoolId', '$$scid'] }] } } },
-          { $project: { class: 1 } },
-        ],
-        as: '_student',
-      },
-    },
+    { $match: confirmedPaymentMatch({ schoolId, startDate, endDate, timezone }) },
+    ...paymentClassStages({ className, classAt, timezone }),
     { $sort: { confirmedAt: 1 } },
   ];
 }
 
 // Format a single aggregation row as one CSV line (no trailing newline).
 function formatAccountingRow(r, exportedAt) {
-  const studentClass = r._student?.[0]?.class ?? '';
+  const studentClass = r._reportClass ?? r.classAtPaymentTime ?? '';
   // #883 — use stored fiat snapshot when available, else leave blank
   const fiatAmount   = r.fiatSnapshot?.fiatAmount   ?? '';
   const fiatCurrency = r.fiatSnapshot?.fiatCurrency ?? '';
@@ -493,9 +550,8 @@ function formatAccountingRow(r, exportedAt) {
   ].map(v => csvEscape(v)).join(',');
 }
 
-async function generateAccountingCsv({ schoolId, startDate, endDate, timezone = 'UTC' } = {}) {
-  // Enrich with student class via a $lookup
-  const rows = await Payment.aggregate(buildAccountingPipeline({ schoolId, startDate, endDate, timezone }));
+async function generateAccountingCsv(options = {}) {
+  const rows = await Payment.aggregate(buildAccountingPipeline(options));
 
   const exportedAt = new Date().toISOString();
   const lines = [ACCOUNTING_HEADERS_V1.map(csvEscape).join(',')];
@@ -517,8 +573,8 @@ async function generateAccountingCsv({ schoolId, startDate, endDate, timezone = 
  *
  * @param {{ schoolId: string, startDate?: string, endDate?: string, res: object }} options
  */
-async function generateAccountingCsvStream({ schoolId, startDate, endDate, timezone = 'UTC', res } = {}) {
-  const cursor = Payment.aggregate(buildAccountingPipeline({ schoolId, startDate, endDate, timezone })).cursor();
+async function generateAccountingCsvStream({ res, ...options } = {}) {
+  const cursor = Payment.aggregate(buildAccountingPipeline(options)).cursor();
   const exportedAt = new Date().toISOString();
 
   res.write(ACCOUNTING_HEADERS_V1.map(csvEscape).join(',') + '\n');
