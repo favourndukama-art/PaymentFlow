@@ -111,7 +111,7 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-School-ID', 'Idempotency-Key', 'X-Correlation-ID'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-School-ID', 'X-School-Slug', 'Idempotency-Key', 'X-Correlation-ID'],
   exposedHeaders: ['X-Correlation-ID'],
   credentials: true,
 }));

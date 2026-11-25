@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useTranslation } from "react-i18next";
 import { generateStellarPaymentUri, availableMemoTypes } from "../utils/stellarUri";
 import { encodeMemo } from "../utils/stellarMemo";
-import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds, getPaymentPlan } from "../services/api";
+import { getPublicStudent, getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds, getPaymentPlan } from "../services/api";
 import DisputeForm from "./DisputeForm";
 import VirtualTransactionList from "./VirtualTransactionList";
 import { useSessionGuard } from "../hooks/useSessionGuard";
@@ -53,7 +53,7 @@ function InfoRow({ label, children }) {
   );
 }
 
-export default function PaymentForm({ initialStudentId = "", disabled = false }) {
+export default function PaymentForm({ initialStudentId = "", disabled = false, schoolSlug }) {
   const [studentId, setStudentId]             = useState(initialStudentId);
   const [shareCopied, setShareCopied]         = useState(false);
   const [student, setStudent]                 = useState(null);
@@ -153,6 +153,17 @@ export default function PaymentForm({ initialStudentId = "", disabled = false })
     setPaymentsLoading(true);
     try {
       const signal = controller.signal;
+      if (schoolSlug) {
+        const config = { signal, headers: { "X-School-Slug": schoolSlug } };
+        const [studentResponse, instructionResponse] = await Promise.all([
+          getPublicStudent(id, config),
+          getPaymentInstructions(id, config),
+        ]);
+        setStudent({ ...studentResponse.data, studentId: id });
+        setInstructions(instructionResponse.data);
+        return;
+      }
+
       const [stuRes, instrRes, payRes, balRes, planRes] = await Promise.allSettled([
         getStudent(id, { signal }),
         getPaymentInstructions(id, { signal }),
@@ -211,7 +222,7 @@ export default function PaymentForm({ initialStudentId = "", disabled = false })
         setPaymentsLoading(false);
       }
     }
-  }, [t]);
+  }, [t, schoolSlug]);
 
   // #1344 — a bookmarked/shared /pay/:studentId URL pre-fills the lookup so a
   // parent doesn't have to retype the student ID on every visit.
@@ -220,7 +231,10 @@ export default function PaymentForm({ initialStudentId = "", disabled = false })
   }, [initialStudentId, lookupStudent]);
 
   function sharePaymentUrl(id) {
-    return `${window.location.origin}/pay/${encodeURIComponent(id)}`;
+    const base = `${window.location.origin}/pay/`;
+    return schoolSlug
+      ? `${base}${encodeURIComponent(schoolSlug)}?student=${encodeURIComponent(id)}`
+      : `${base}${encodeURIComponent(id)}`;
   }
 
   async function copyShareLink() {

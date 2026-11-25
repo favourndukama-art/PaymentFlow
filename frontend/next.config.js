@@ -96,9 +96,15 @@ const nextConfig = {
   // Same-origin API proxy: browser → /api/* (this origin) → backend. Keeps
   // requests first-party so HttpOnly SameSite=Strict auth cookies are sent.
   async rewrites() {
-    return [
-      { source: '/api/:path*', destination: `${BACKEND_ORIGIN}/api/:path*` },
-    ];
+    return {
+      beforeFiles: [
+        { source: '/robots.txt', destination: '/api/seo/robots' },
+        { source: '/sitemap.xml', destination: '/api/seo/sitemap' },
+      ],
+      fallback: [
+        { source: '/api/:path*', destination: `${BACKEND_ORIGIN}/api/:path*` },
+      ],
+    };
   },
   async headers() {
     return [
